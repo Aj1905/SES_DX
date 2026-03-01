@@ -119,7 +119,7 @@ const AppConfig = {
 
       ai: {
         provider: this.require(props, 'AI_PROVIDER'),
-        apiUrl: this.require(props, 'AI_API_URL'),
+        apiUrl: props.AI_API_URL || '',
         apiKey: this.require(props, 'AI_API_KEY'),
         model: this.require(props, 'AI_MODEL')
       },
@@ -143,8 +143,8 @@ const AppConfig = {
       throw new Error('AIあり実装では AI_PROVIDER=none は使えません。');
     }
 
-    if (!config.ai.apiUrl) {
-      throw new Error('AIあり実装では AI_API_URL が必須です。');
+    if (config.ai.provider !== 'gemini' && !config.ai.apiUrl) {
+      throw new Error('AIあり実装では AI_API_URL が必須です（gemini以外）。');
     }
 
     if (!config.ai.apiKey) {

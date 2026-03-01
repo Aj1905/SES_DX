@@ -38,12 +38,92 @@ function runBatch() {
   }
 }
 
-function testProcessLatestOne() {
+/**
+ * テスト用: 未処理メール1件を取得し、抽出・正規化してスプレッドシートに保存する。
+ * マッチングや下書き作成は行わない。ラベルも変更しない。
+ * 実行後、Logger.logで抽出結果を確認できる。
+ */
+function testExtractOne() {
   const config = AppConfig.load();
+  BootstrapService.ensureLabels(config);
+  BootstrapService.ensureSheets(config);
+
   const threads = GmailRepository.fetchUnprocessedThreads(config);
   if (threads.length === 0) {
-    Logger.log('No target thread found.');
+    Logger.log('未処理のスレッドが見つかりません。');
     return;
   }
-  ProcessingService.processThread(config, threads[0]);
+
+  const thread = threads[0];
+  const messages = thread.getMessages();
+  const message = messages[messages.length - 1];
+
+  Logger.log('=== 対象メール ===');
+  Logger.log('件名: ' + message.getSubject());
+  Logger.log('送信元: ' + message.getFrom());
+  Logger.log('日時: ' + message.getDate());
+
+  // 1. 取込
+  const rawRecord = {
+    raw_id: Utils.uuid(),
+    message_id: message.getId(),
+    thread_id: thread.getId(),
+    received_at: message.getDate(),
+    from_address: message.getFrom() || '',
+    to_address: message.getTo() || '',
+    subject: message.getSubject() || '',
+    original_body: message.getPlainBody() || '',
+    normalized_body: Utils.normalizeBody(message.getPlainBody() || ''),
+    source_type: 'gmail',
+    gmail_labels: thread.getLabels().map((x) => x.getName()).join(','),
+    status: 'TEST',
+    created_at: Utils.nowIso()
+  };
+  RawInboxRepository.save(config, rawRecord);
+  Logger.log('=== rawInbox に保存 (raw_id=' + rawRecord.raw_id + ') ===');
+
+  // 2. 抽出
+  const parsedResult = ExtractionPipeline.run(config, rawRecord);
+  const parsedId = Utils.uuid();
+  ParsedEntityRepository.save(config, {
+    parsed_id: parsedId,
+    raw_id: rawRecord.raw_id,
+    entity_type: parsedResult.entityType,
+    extractor_name: parsedResult.extractorName,
+    extractor_version: parsedResult.extractorVersion,
+    confidence: parsedResult.confidence,
+    warnings_json: Utils.safeJsonStringify(parsedResult.warnings || []),
+    raw_fields_json: Utils.safeJsonStringify(parsedResult.rawFields || {}),
+    created_at: Utils.nowIso()
+  });
+  Logger.log('=== parsedEntities に保存 (parsed_id=' + parsedId + ') ===');
+  Logger.log('entityType: ' + parsedResult.entityType);
+  Logger.log('confidence: ' + parsedResult.confidence);
+  Logger.log('rawFields: ' + Utils.safeJsonStringify(parsedResult.rawFields));
+
+  // 3. 正規化
+  const normalized = EntityNormalizer.normalize(parsedResult, rawRecord);
+  const normalizedId = Utils.uuid();
+  NormalizedEntityRepository.save(config, {
+    normalized_id: normalizedId,
+    parsed_id: parsedId,
+    raw_id: rawRecord.raw_id,
+    entity_type: normalized.entityType,
+    normalizer_name: 'default_entity_normalizer',
+    normalizer_version: '1.0.0',
+    display_name: normalized.displayName,
+    primary_email: normalized.primaryEmail,
+    skills_csv: normalized.skillsCsv,
+    location_text: normalized.locationText,
+    rate_min: normalized.rateMin,
+    rate_max: normalized.rateMax,
+    availability_text: normalized.availabilityText,
+    remote_type: normalized.remoteType,
+    normalized_json: Utils.safeJsonStringify(normalized.normalizedJson),
+    created_at: Utils.nowIso()
+  });
+  Logger.log('=== normalizedEntities に保存 (normalized_id=' + normalizedId + ') ===');
+  Logger.log('normalizedJson: ' + Utils.safeJsonStringify(normalized.normalizedJson));
+
+  Logger.log('=== テスト完了 ===');
 }
