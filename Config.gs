@@ -91,7 +91,7 @@ const AppConfig = {
         processLog: this.require(props, 'PROCESS_LOG_SHEET_NAME')
       },
 
-      batchSize: this.toInt(props.BATCH_SIZE, 20),
+      batchSize: this.toInt(props.BATCH_SIZE, 100),
       lookbackDays: this.toInt(props.LOOKBACK_DAYS, 30),
       pollMinutes: this.allowedPollMinutes(this.toInt(props.POLL_MINUTES, 5)),
       matchThreshold: this.toInt(props.MATCH_THRESHOLD, 35),
