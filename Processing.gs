@@ -41,9 +41,12 @@ const ProcessingService = {
       const normalizedId = this.persistNormalized(config, rawRecord, parsedId, normalized);
       this.log(config, latestMessage, 'NORMALIZE', 'SUCCESS', `normalized_id=${normalizedId}`);
 
+      const dbSheetName = normalized.entityType === 'engineer'
+        ? config.sheetNames.engineerDb
+        : config.sheetNames.projectDb;
       const sourceNormalizedRecord = SpreadsheetRepository.findFirst(
         config,
-        config.sheetNames.normalizedEntities,
+        dbSheetName,
         (row) => String(row.normalized_id) === String(normalizedId)
       );
 
@@ -128,16 +131,18 @@ const ProcessingService = {
       parsed_id: parsedId,
       raw_id: rawRecord.raw_id,
       entity_type: normalized.entityType,
-      normalizer_name: 'default_entity_normalizer',
-      normalizer_version: '1.0.0',
       display_name: normalized.displayName,
       primary_email: normalized.primaryEmail,
       skills_csv: normalized.skillsCsv,
       location_text: normalized.locationText,
+      nearest_station: normalized.normalizedJson.nearestStation || '',
       rate_min: normalized.rateMin,
       rate_max: normalized.rateMax,
       availability_text: normalized.availabilityText,
       remote_type: normalized.remoteType,
+      required_skills: normalized.normalizedJson.requiredSkills || '',
+      nice_to_have_skills: normalized.normalizedJson.niceToHaveSkills || '',
+      client_name: normalized.normalizedJson.clientName || '',
       normalized_json: Utils.safeJsonStringify(normalized.normalizedJson),
       created_at: Utils.nowIso()
     });

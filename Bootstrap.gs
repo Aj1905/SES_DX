@@ -2,7 +2,7 @@
 
 const BootstrapService = {
   ensureLabels(config) {
-    Object.values(config.labels).forEach((labelName) => {
+    [config.labels.processing, config.labels.processed, config.labels.error].forEach((labelName) => {
       if (!GmailApp.getUserLabelByName(labelName)) {
         GmailApp.createLabel(labelName);
       }
@@ -14,7 +14,8 @@ const BootstrapService = {
 
     this.ensureSheet(spreadsheet, config.sheetNames.rawInbox, SHEET_HEADERS.rawInbox);
     this.ensureSheet(spreadsheet, config.sheetNames.parsedEntities, SHEET_HEADERS.parsedEntities);
-    this.ensureSheet(spreadsheet, config.sheetNames.normalizedEntities, SHEET_HEADERS.normalizedEntities);
+    this.ensureSheet(spreadsheet, config.sheetNames.engineerDb, SHEET_HEADERS.engineerDb);
+    this.ensureSheet(spreadsheet, config.sheetNames.projectDb, SHEET_HEADERS.projectDb);
     this.ensureSheet(spreadsheet, config.sheetNames.matches, SHEET_HEADERS.matches);
     this.ensureSheet(spreadsheet, config.sheetNames.processLog, SHEET_HEADERS.processLog);
   },

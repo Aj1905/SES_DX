@@ -2,7 +2,7 @@
 
 const GmailRepository = {
   fetchUnprocessedThreads(config) {
-    const query = `label:"${config.labels.unprocessed}" -label:"${config.labels.processing}" newer_than:${config.lookbackDays}d`;
+    const query = `-label:"${config.labels.processing}" -label:"${config.labels.processed}" -label:"${config.labels.error}" newer_than:${config.lookbackDays}d`;
     const threads = GmailApp.search(query, 0, config.batchSize);
     return threads.sort((a, b) => b.getLastMessageDate() - a.getLastMessageDate());
   },
@@ -13,7 +13,8 @@ const GmailRepository = {
   },
 
   moveToProcessing(config, thread) {
-    this.replaceLabels(thread, config.labels.unprocessed, config.labels.processing);
+    const toLabel = GmailApp.getUserLabelByName(config.labels.processing);
+    if (toLabel) thread.addLabel(toLabel);
   },
 
   moveToProcessed(config, thread) {
@@ -113,22 +114,35 @@ const ParsedEntityRepository = {
 };
 
 const NormalizedEntityRepository = {
+  _resolve(entityType) {
+    if (entityType === 'engineer') {
+      return { sheetKey: 'engineerDb', headersKey: 'engineerDb' };
+    }
+    if (entityType === 'project') {
+      return { sheetKey: 'projectDb', headersKey: 'projectDb' };
+    }
+    throw new Error(`Unknown entity_type for DB save: ${entityType}`);
+  },
+
   save(config, normalizedRecord) {
+    const ref = this._resolve(normalizedRecord.entity_type);
     SpreadsheetRepository.appendObject(
       config,
-      config.sheetNames.normalizedEntities,
-      SHEET_HEADERS.normalizedEntities,
+      config.sheetNames[ref.sheetKey],
+      SHEET_HEADERS[ref.headersKey],
       normalizedRecord
     );
   },
 
   listByEntityType(config, entityType) {
-    return SpreadsheetRepository.listObjects(config, config.sheetNames.normalizedEntities)
-      .filter((row) => String(row.entity_type) === entityType);
+    const ref = this._resolve(entityType);
+    return SpreadsheetRepository.listObjects(config, config.sheetNames[ref.sheetKey]);
   },
 
   listAll(config) {
-    return SpreadsheetRepository.listObjects(config, config.sheetNames.normalizedEntities);
+    const engineers = SpreadsheetRepository.listObjects(config, config.sheetNames.engineerDb);
+    const projects = SpreadsheetRepository.listObjects(config, config.sheetNames.projectDb);
+    return engineers.concat(projects);
   }
 };
 

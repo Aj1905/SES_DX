@@ -27,21 +27,39 @@ const SHEET_HEADERS = {
     'raw_fields_json',
     'created_at'
   ],
-  normalizedEntities: [
+  engineerDb: [
     'normalized_id',
     'parsed_id',
     'raw_id',
     'entity_type',
-    'normalizer_name',
-    'normalizer_version',
     'display_name',
     'primary_email',
     'skills_csv',
     'location_text',
+    'nearest_station',
     'rate_min',
     'rate_max',
     'availability_text',
     'remote_type',
+    'normalized_json',
+    'created_at'
+  ],
+  projectDb: [
+    'normalized_id',
+    'parsed_id',
+    'raw_id',
+    'entity_type',
+    'display_name',
+    'primary_email',
+    'required_skills',
+    'nice_to_have_skills',
+    'location_text',
+    'nearest_station',
+    'rate_min',
+    'rate_max',
+    'availability_text',
+    'remote_type',
+    'client_name',
     'normalized_json',
     'created_at'
   ],
@@ -77,7 +95,6 @@ const AppConfig = {
       managerAlertEmail: this.require(props, 'MANAGER_ALERT_EMAIL'),
 
       labels: {
-        unprocessed: this.require(props, 'UNPROCESSED_LABEL'),
         processing: this.require(props, 'PROCESSING_LABEL'),
         processed: this.require(props, 'PROCESSED_LABEL'),
         error: this.require(props, 'ERROR_LABEL')
@@ -86,7 +103,8 @@ const AppConfig = {
       sheetNames: {
         rawInbox: this.require(props, 'RAW_INBOX_SHEET_NAME'),
         parsedEntities: this.require(props, 'PARSED_ENTITIES_SHEET_NAME'),
-        normalizedEntities: this.require(props, 'NORMALIZED_ENTITIES_SHEET_NAME'),
+        engineerDb: this.require(props, 'ENGINEER_DB_SHEET_NAME'),
+        projectDb: this.require(props, 'PROJECT_DB_SHEET_NAME'),
         matches: this.require(props, 'MATCHES_SHEET_NAME'),
         processLog: this.require(props, 'PROCESS_LOG_SHEET_NAME')
       },
@@ -111,12 +129,6 @@ const AppConfig = {
         props.PROJECT_DRAFT_BODY_TEMPLATE ||
         'お世話になっております。\n\n以下の要員をご提案します。\n\n氏名: {{displayName}}\nスキル: {{skillsCsv}}\n勤務地: {{locationText}}\n稼働: {{availabilityText}}\n希望単価: {{rateMin}}〜{{rateMax}}\n',
 
-      // AIあり前提。ただし将来の差し替え余地は残す。
-      extractorPipeline: (props.EXTRACTOR_PIPELINE || 'regex,ai')
-        .split(',')
-        .map((x) => x.trim())
-        .filter((x) => x),
-
       ai: {
         provider: this.require(props, 'AI_PROVIDER'),
         apiUrl: props.AI_API_URL || '',
@@ -124,10 +136,6 @@ const AppConfig = {
         model: this.require(props, 'AI_MODEL')
       },
 
-      keywords: {
-        engineer: (props.ENGINEER_KEYWORDS || '要員,人材,技術者,エンジニア').split(','),
-        project: (props.PROJECT_KEYWORDS || '案件,募集,ポジション,業務内容').split(',')
-      }
     };
 
     this.validate(config);
@@ -135,10 +143,6 @@ const AppConfig = {
   },
 
   validate(config) {
-    if (!config.extractorPipeline.includes('ai')) {
-      throw new Error('AIあり実装では EXTRACTOR_PIPELINE に ai を含める必要があります。例: regex,ai');
-    }
-
     if (config.ai.provider === 'none') {
       throw new Error('AIあり実装では AI_PROVIDER=none は使えません。');
     }

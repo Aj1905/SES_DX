@@ -1,168 +1,210 @@
-// 抽出器の切り替えとメール本文からの中間データ抽出パイプラインを担う。
+// メールからの情報抽出パイプラインを担う。
 
-const ExtractorRegistry = {
-  createPipeline(config) {
-    return config.extractorPipeline.map((name) => {
-      if (name === 'regex') return RegexHeuristicExtractor;
-      if (name === 'ai') return AiAssistedExtractor;
-      throw new Error(`Unknown extractor: ${name}`);
-    });
+// ===== 抽出モード選択 =====
+// 'ai_full' : AI丸投げモード — 分類・抽出を全てAIで行う
+// 'hybrid'  : アルゴリズム併用モード — 可能な限りアルゴリズムで行い、残りをAIで補填
+const EXTRACTION_MODE = 'ai_full';
+
+// ===== 1. 除去する記号リスト =====
+const STRIP_CHARS = ':[]{}!@#$%^&*()_+=|\\<>?/~`"\'';
+
+// ===== 2. 除去する定型文リスト =====
+const STRIP_PHRASES = [
+  'お世話になっております',
+  'お世話になります',
+  'お疲れ様です',
+  'お疲れ様でございます',
+  'いつもお世話になっております',
+  'いつも大変お世話になっております',
+  'よろしくお願いいたします',
+  'よろしくお願い致します',
+  'よろしくお願いします',
+  '以上、よろしくお願いいたします',
+  '以上よろしくお願いいたします',
+  'ご確認よろしくお願いいたします',
+  'ご確認のほどよろしくお願いいたします',
+  '何卒よろしくお願いいたします',
+  'ご検討よろしくお願いいたします',
+  '以下ご確認ください',
+  '突然のご連絡失礼いたします'
+];
+
+// ===== 3. 人材メール取得情報リスト =====
+const ENGINEER_FIELDS = [
+  'displayName',
+  'primaryEmail',
+  'skills',
+  'locationText',
+  'nearestStation',
+  'rateMin',
+  'rateMax',
+  'availabilityText',
+  'remoteType'
+];
+
+// ===== 4. 案件メール取得情報リスト =====
+const PROJECT_FIELDS = [
+  'displayName',
+  'primaryEmail',
+  'requiredSkills',
+  'niceToHaveSkills',
+  'locationText',
+  'nearestStation',
+  'rateMin',
+  'rateMax',
+  'availabilityText',
+  'remoteType',
+  'clientName'
+];
+
+// ===== 分類用プロンプト =====
+const CLASSIFY_PROMPT = [
+  'You classify SES (System Engineering Service) staffing emails written in Japanese.',
+  'You will receive ONLY the email subject line.',
+  'Determine whether the email is about an engineer (人材/要員) or a project (案件).',
+  'Engineer email: about a person, their skills, experience, availability.',
+  'Project email: about a project, required skills, budget, work conditions.',
+  'Return JSON only: {"entityType": "engineer"} or {"entityType": "project"}.',
+  'If you cannot determine, return {"entityType": "unknown"}.'
+].join(' ');
+
+// ===== テキスト前処理 =====
+const TextCleaner = {
+  clean(subject, body) {
+    const combined = (subject || '') + '\n' + (body || '');
+
+    // 記号除去
+    const stripSet = new Set(STRIP_CHARS.split(''));
+    let text = combined
+      .split('')
+      .filter(function(ch) { return !stripSet.has(ch); })
+      .join('');
+
+    // 定型文除去
+    for (let i = 0; i < STRIP_PHRASES.length; i++) {
+      text = text.split(STRIP_PHRASES[i]).join('');
+    }
+
+    // 連続空白を1つに潰す
+    return text.replace(/\s+/g, ' ').trim();
   }
 };
 
+// ===== パイプライン（外部から呼ばれるインターフェース） =====
 const ExtractionPipeline = {
   run(config, rawRecord) {
-    const extractors = ExtractorRegistry.createPipeline(config);
-
-    const aggregate = {
-      entityType: 'unknown',
-      extractorName: 'pipeline',
-      extractorVersion: '1.0.0',
-      confidence: 0,
-      rawFields: {},
-      warnings: [],
-      fieldSources: {}
-    };
-
-    for (const extractor of extractors) {
-      const result = extractor.extract(config, rawRecord, aggregate);
-      if (!result) continue;
-
-      this.mergeResult(aggregate, result);
+    if (EXTRACTION_MODE === 'ai_full') {
+      return AiFullMode.run(config, rawRecord);
     }
-
-    if (Object.keys(aggregate.rawFields).length === 0) {
-      aggregate.warnings.push('No extractor produced usable fields');
-    }
-
-    return {
-      entityType: aggregate.entityType,
-      extractorName: aggregate.extractorName,
-      extractorVersion: aggregate.extractorVersion,
-      confidence: aggregate.confidence,
-      rawFields: aggregate.rawFields,
-      warnings: aggregate.warnings
-    };
-  },
-
-  mergeResult(aggregate, result) {
-    const resultConfidence = Number(result.confidence || 0);
-
-    if (
-      result.entityType &&
-      result.entityType !== 'unknown' &&
-      (
-        aggregate.entityType === 'unknown' ||
-        resultConfidence >= Number(aggregate.confidence || 0)
-      )
-    ) {
-      aggregate.entityType = result.entityType;
-      aggregate.extractorName = result.extractorName;
-      aggregate.extractorVersion = result.extractorVersion;
-      aggregate.confidence = resultConfidence;
-    }
-
-    const incomingFields = result.rawFields || {};
-    Object.keys(incomingFields).forEach((key) => {
-      const incomingValue = incomingFields[key];
-      const currentValue = aggregate.rawFields[key];
-
-      if (this.isMeaningful(incomingValue) && !this.isMeaningful(currentValue)) {
-        aggregate.rawFields[key] = incomingValue;
-        aggregate.fieldSources[key] = result.extractorName;
-      }
-    });
-
-    if (result.warnings && result.warnings.length) {
-      aggregate.warnings = aggregate.warnings.concat(result.warnings);
-    }
-  },
-
-  isMeaningful(value) {
-    if (value === null || value === undefined) return false;
-    if (Array.isArray(value)) return value.length > 0;
-    return String(value).trim() !== '';
+    return HybridMode.run(config, rawRecord);
   }
 };
 
-const RegexHeuristicExtractor = {
-  extract(config, rawRecord) {
-    const text = rawRecord.normalized_body;
-    const entityType = Utils.classifyByKeywords(config, [rawRecord.subject, text].join('\n'));
+// ===== AI丸投げモード =====
+const AiFullMode = {
+  run(config, rawRecord) {
+    const aiClient = AiClientFactory.create(config);
 
-    const fields = {
-      displayName: Utils.extractFirst(text, [
-        /(?:氏名|名前|Name)\s*[:：]\s*(.+)/i,
-        /(?:案件名|件名|ポジション)\s*[:：]\s*(.+)/i,
-        /【案件】\s*(.+)/i
-      ]),
-      primaryEmail: Utils.extractEmail(text) || Utils.extractEmail(rawRecord.from_address),
-      skills: Utils.extractFirst(text, [
-        /(?:スキル|技術|経験技術)\s*[:：]\s*([\s\S]{1,300})/i
-      ]),
-      locationText: Utils.extractFirst(text, [
-        /(?:勤務地|居住地|場所)\s*[:：]\s*(.+)/i
-      ]),
-      nearestStation: Utils.extractFirst(text, [
-        /(?:最寄駅)\s*[:：]\s*(.+)/i
-      ]),
-      rateMin: Utils.extractRateMin(text),
-      rateMax: Utils.extractRateMax(text),
-      availabilityText: Utils.extractFirst(text, [
-        /(?:稼働|参画可能時期|開始時期|参画時期|期間)\s*[:：]\s*(.+)/i
-      ]),
-      remoteType: Utils.extractRemoteType(text),
-      requiredSkills: Utils.extractFirst(text, [
-        /(?:必須スキル|必須|必須経験)\s*[:：]\s*([\s\S]{1,300})/i
-      ]),
-      niceToHaveSkills: Utils.extractFirst(text, [
-        /(?:尚可|歓迎スキル|尚可スキル)\s*[:：]\s*([\s\S]{1,300})/i
-      ]),
-      clientName: Utils.extractFirst(text, [
-        /(?:顧客名|クライアント|エンド)\s*[:：]\s*(.+)/i
-      ])
-    };
+    // [1] タイトルだけをAIに投げて人材/案件を分類
+    const entityType = this.classify(aiClient, config, rawRecord.subject);
 
-    let confidence = 0.2;
-    if (entityType !== 'unknown') confidence += 0.2;
-    if (fields.displayName) confidence += 0.15;
-    if (fields.primaryEmail) confidence += 0.1;
-    if (fields.skills || fields.requiredSkills) confidence += 0.15;
-    if (fields.locationText) confidence += 0.1;
-    if (fields.rateMin || fields.rateMax) confidence += 0.1;
-    if (fields.availabilityText) confidence += 0.1;
+    // タイトル+本文を結合 → 記号・定型文除去 → 空白潰し
+    const cleanedText = TextCleaner.clean(rawRecord.subject, rawRecord.normalized_body);
+
+    // [2] クリーニング済みテキストをAIに投げてフィールド抽出
+    const fieldList = entityType === 'engineer' ? ENGINEER_FIELDS : PROJECT_FIELDS;
+    const result = this.extractFields(aiClient, config, cleanedText, entityType, fieldList);
 
     return {
       entityType,
-      extractorName: 'regex_heuristic',
-      extractorVersion: '3.0.0',
-      confidence: Math.min(confidence, 0.8),
-      rawFields: fields,
-      warnings: entityType === 'unknown'
-        ? ['Entity type could not be classified by regex extractor']
-        : []
+      extractorName: 'ai_full',
+      extractorVersion: '1.0.0',
+      confidence: Number(result.confidence || 0.8),
+      rawFields: result.rawFields || {},
+      warnings: result.warnings || []
     };
+  },
+
+  classify(aiClient, config, subject) {
+    const result = aiClient.ask(config, CLASSIFY_PROMPT, subject || '');
+    const entityType = String(result.entityType || '').toLowerCase();
+
+    if (entityType !== 'engineer' && entityType !== 'project') {
+      throw new Error('AI丸投げモード: メールを人材/案件に分類できませんでした');
+    }
+    return entityType;
+  },
+
+  extractFields(aiClient, config, text, entityType, fieldList) {
+    const prompt = [
+      'You extract structured information from a Japanese SES staffing email.',
+      'This email is about: ' + (entityType === 'engineer' ? '人材 (engineer)' : '案件 (project)') + '.',
+      'Extract ONLY the following fields: ' + fieldList.join(', ') + '.',
+      'Return JSON only: {"rawFields": {field: value}, "confidence": 0-1, "warnings": []}.',
+      'Use empty string for fields not found in the text.'
+    ].join(' ');
+
+    return aiClient.ask(config, prompt, text);
   }
 };
 
-const AiAssistedExtractor = {
-  extract(config, rawRecord, aggregate) {
+// ===== アルゴリズム併用モード =====
+const HybridMode = {
+  run(config, rawRecord) {
     const aiClient = AiClientFactory.create(config);
 
-    const response = aiClient.extractFields(config, {
-      subject: rawRecord.subject,
-      body: rawRecord.normalized_body,
-      fromAddress: rawRecord.from_address,
-      existingFields: (aggregate && aggregate.rawFields) || {}
+    // [1] アルゴリズムで分類を試みる → 決まらなければAIにフォールバック
+    let entityType = this.classifyByAlgorithm(config, rawRecord.subject);
+
+    if (entityType === 'unknown') {
+      entityType = AiFullMode.classify(aiClient, config, rawRecord.subject);
+    }
+
+    // タイトル+本文を結合 → 記号・定型文除去 → 空白潰し
+    const cleanedText = TextCleaner.clean(rawRecord.subject, rawRecord.normalized_body);
+    const fieldList = entityType === 'engineer' ? ENGINEER_FIELDS : PROJECT_FIELDS;
+
+    // [2] アルゴリズムでフィールド抽出を試みる
+    const algoFields = this.extractByAlgorithm(config, cleanedText, entityType, fieldList);
+
+    // アルゴリズムで取れなかったフィールドをAIで補填
+    const missingFields = fieldList.filter(function(f) {
+      return !algoFields[f] || String(algoFields[f]).trim() === '';
+    });
+
+    let aiFields = {};
+    if (missingFields.length > 0) {
+      const aiResult = AiFullMode.extractFields(aiClient, config, cleanedText, entityType, missingFields);
+      aiFields = aiResult.rawFields || {};
+    }
+
+    // マージ: アルゴリズム結果を優先、不足分をAIで埋める
+    const rawFields = {};
+    fieldList.forEach(function(f) {
+      rawFields[f] = algoFields[f] || aiFields[f] || '';
     });
 
     return {
-      entityType: response.entityType || 'unknown',
-      extractorName: response.extractorName || 'ai_assisted',
-      extractorVersion: response.extractorVersion || '1.0.0',
-      confidence: Number(response.confidence || 0),
-      rawFields: response.rawFields || {},
-      warnings: response.warnings || []
+      entityType,
+      extractorName: 'hybrid',
+      extractorVersion: '1.0.0',
+      confidence: missingFields.length === 0 ? 0.9 : 0.8,
+      rawFields: rawFields,
+      warnings: []
     };
+  },
+
+  // --- [1] 分類アルゴリズム（TODO: 実装） ---
+  classifyByAlgorithm(config, subject) {
+    // ここにアルゴリズムを実装する
+    // 'engineer' / 'project' / 'unknown' を返す
+    return 'unknown';
+  },
+
+  // --- [2] フィールド抽出アルゴリズム（TODO: 実装） ---
+  extractByAlgorithm(config, text, entityType, fieldList) {
+    // ここにアルゴリズムを実装する
+    // { fieldName: value, ... } を返す（取得できなかったフィールドは含めなくてよい）
+    return {};
   }
 };

@@ -29,21 +29,6 @@ const Utils = {
       .trim();
   },
 
-  classifyByKeywords(config, text) {
-    const lower = String(text || '').toLowerCase();
-
-    const engineerScore = config.keywords.engineer.reduce((sum, keyword) => {
-      return sum + (lower.includes(String(keyword).toLowerCase()) ? 1 : 0);
-    }, 0);
-
-    const projectScore = config.keywords.project.reduce((sum, keyword) => {
-      return sum + (lower.includes(String(keyword).toLowerCase()) ? 1 : 0);
-    }, 0);
-
-    if (engineerScore === projectScore) return 'unknown';
-    return engineerScore > projectScore ? 'engineer' : 'project';
-  },
-
   extractEmail(text) {
     const match = String(text || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
     return match ? match[0].trim() : '';

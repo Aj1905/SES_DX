@@ -109,20 +109,23 @@ function testExtractOne() {
     parsed_id: parsedId,
     raw_id: rawRecord.raw_id,
     entity_type: normalized.entityType,
-    normalizer_name: 'default_entity_normalizer',
-    normalizer_version: '1.0.0',
     display_name: normalized.displayName,
     primary_email: normalized.primaryEmail,
     skills_csv: normalized.skillsCsv,
     location_text: normalized.locationText,
+    nearest_station: normalized.normalizedJson.nearestStation || '',
     rate_min: normalized.rateMin,
     rate_max: normalized.rateMax,
     availability_text: normalized.availabilityText,
     remote_type: normalized.remoteType,
+    required_skills: normalized.normalizedJson.requiredSkills || '',
+    nice_to_have_skills: normalized.normalizedJson.niceToHaveSkills || '',
+    client_name: normalized.normalizedJson.clientName || '',
     normalized_json: Utils.safeJsonStringify(normalized.normalizedJson),
     created_at: Utils.nowIso()
   });
-  Logger.log('=== normalizedEntities に保存 (normalized_id=' + normalizedId + ') ===');
+  const dbName = normalized.entityType === 'engineer' ? '人材DB' : '案件DB';
+  Logger.log('=== ' + dbName + ' に保存 (normalized_id=' + normalizedId + ') ===');
   Logger.log('normalizedJson: ' + Utils.safeJsonStringify(normalized.normalizedJson));
 
   Logger.log('=== テスト完了 ===');
